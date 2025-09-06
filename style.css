@@ -1,3 +1,5 @@
+
+
 body {
   background-color: rgb(0, 0, 0);
 }
@@ -19,9 +21,10 @@ p {
 }
 
 #toby1 {
-    width: 1000px;
-    height: 400px;
+    width: 400px;
+    height: 300px;
 }
+
 
 
 
