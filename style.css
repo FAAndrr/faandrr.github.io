@@ -18,10 +18,11 @@ p {
     font-family: "Courier New", Courier, monospace;
 }
 
-toby1 {
+#toby1 {
     width: 1000px;
     height: 400px;
 }
+
 
 
 
