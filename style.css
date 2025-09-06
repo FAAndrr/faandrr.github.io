@@ -29,18 +29,6 @@ p {
     border-radius: 10px;      
 }
 
-.profile-container {
-    overflow: auto; /* Ensures the container wraps around the floated image */
-}
-
-.text-block {
-    overflow: hidden; /* Makes text stay beside the image */
-}
-
-
-
-
-
 
 
 
