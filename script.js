@@ -19,18 +19,18 @@ const quizQuestions = [
     question: "What is the capital of France?",
     answers: [
       { text: "London", correct: false },
-      { text: "Berlin", correct: false },
+      { text: "Leon", correct: false },
       { text: "Paris", correct: true },
       { text: "Madrid", correct: false },
     ],
   },
   {
-    question: "Which planet is known as the Red Planet?",
+    question: "What is Will Zhong's IQ?",
     answers: [
-      { text: "Venus", correct: false },
-      { text: "Mars", correct: true },
-      { text: "Jupiter", correct: false },
-      { text: "Saturn", correct: false },
+      { text: "40", correct: false },
+      { text: "230", correct: true },
+      { text: "120", correct: false },
+      { text: "100", correct: false },
     ],
   },
   {
