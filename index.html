@@ -18,14 +18,11 @@
   <script>
     window.addEventListener('error', function (event) {
       var status = document.getElementById('status');
-      if (status) {
-        status.textContent = 'The game could not start: ' +
-          (event.message || 'a required script failed to load.');
-      }
+      if (status) status.textContent = 'The game could not start: ' + (event.message || 'a required script failed to load.');
     });
   </script>
-  <script defer src="https://cdn.jsdelivr.net/npm/three@0.160.1/build/three.min.js"></script>
-  <script defer src="script.js"></script>
+  <script defer src="vendor/three.min.js"></script>
+  <script defer src="main.js"></script>
 </head>
 <body>
   <div class="panel">
@@ -35,7 +32,7 @@
     <p>Mouse — rotate camera · Esc — release cursor</p>
     <label for="texture">Choose baseplate PNG</label>
     <input id="texture" type="file" accept="image/png">
-    <p id="status" role="status">Choose a PNG to texture the baseplate.</p>
+    <p id="status" role="status">Baseplate PNG texture active.</p>
   </div>
 </body>
 </html>
