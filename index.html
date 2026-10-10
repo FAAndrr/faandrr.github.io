@@ -1,38 +1,969 @@
 <!doctype html>
 <html lang="en">
 <head>
-  <meta charset="utf-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>Baseplate Playground</title>
-  <style>
-    * { box-sizing: border-box; }
-    body { margin: 0; overflow: hidden; font-family: system-ui, sans-serif; background: #b8d9ef; color: #183344; }
-    canvas { display: block; touch-action: none; }
-    .panel { position: fixed; top: 20px; left: 20px; max-width: calc(100vw - 40px); padding: 18px 22px; background: #ffffffdf; border: 1px solid #ffffff; border-radius: 16px; box-shadow: 0 8px 30px #18334418; }
-    h1 { margin: 0 0 8px; font-size: 20px; }
-    p { margin: 5px 0; font-size: 13px; line-height: 1.5; }
-    label { display: inline-block; margin-top: 10px; padding: 8px 12px; border-radius: 8px; background: #183344; color: white; font-size: 13px; cursor: pointer; }
-    input { display: none; }
-    #status { max-width: 300px; }
-  </style>
-  <script>
-    window.addEventListener('error', function (event) {
-      var status = document.getElementById('status');
-      if (status) status.textContent = 'The game could not start: ' + (event.message || 'a required script failed to load.');
-    });
-  </script>
-  <script defer src="vendor/three.min.js"></script>
-  <script defer src="main.js"></script>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<title>Plinth</title>
+<script src="https://sdk.crazygames.com/crazygames-sdk-v3.js"></script>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,500;12..96,800&family=DM+Mono:wght@400;500&display=swap" rel="stylesheet">
+<style>
+/* Layout: full-bleed isometric 3D scene; score floats top-centre; one glass card at the bottom swaps between intro and results.
+   Deliberately single-theme: a dusk-to-night sky that darkens as the tower climbs. */
+:root {
+  --ink: #f6f2ff;
+  --ink-dim: #bdb7dc;
+  --panel: rgba(20, 15, 46, 0.7);
+  --line: rgba(255, 255, 255, 0.18);
+  --accent: #ffb347;
+  --accent-ink: #2a1500;
+  --gold: #ffd86b;
+  --font-display: 'Bricolage Grotesque', 'Trebuchet MS', system-ui, sans-serif;
+  --font-mono: 'DM Mono', ui-monospace, Menlo, monospace;
+  color-scheme: dark;
+}
+html, body { height: 100%; }
+body {
+  background: #1b1640;
+  color: var(--ink);
+  font-family: var(--font-display);
+  overflow: hidden;
+  touch-action: none;
+  -webkit-user-select: none;
+  user-select: none;
+  -webkit-tap-highlight-color: transparent;
+}
+#sky, #gl { position: fixed; inset: 0; width: 100%; height: 100%; display: block; }
+#sky { background: linear-gradient(180deg, #3a4a8c, #f0a878); }
+#glow {
+  position: fixed; inset: 0; pointer-events: none; opacity: 0; transition: opacity 0.35s;
+  background: radial-gradient(ellipse at 50% 55%, transparent 52%, rgba(255, 190, 70, 0.34) 100%);
+}
+#glow.on { opacity: 1; animation: glowPulse 0.9s ease-in-out infinite alternate; }
+@keyframes glowPulse { from { filter: brightness(0.85); } to { filter: brightness(1.25); } }
+
+.hud {
+  position: fixed; left: 0; right: 0;
+  top: calc(env(safe-area-inset-top, 0px) + 10px);
+  padding-inline: 16px;
+  display: grid; grid-template-columns: 1fr auto 1fr; align-items: start; gap: 8px;
+  pointer-events: none;
+}
+.best { font-family: var(--font-mono); font-size: 12px; letter-spacing: 0.14em; color: var(--ink-dim); padding-top: 10px; }
+.best b { color: var(--ink); font-weight: 500; font-size: 16px; letter-spacing: 0.04em; margin-left: 4px; }
+.mid { display: flex; flex-direction: column; align-items: center; gap: 8px; }
+#score {
+  font-size: clamp(64px, 15vw, 116px); font-weight: 800; line-height: 0.95;
+  font-variant-numeric: tabular-nums; letter-spacing: -0.02em;
+  text-shadow: 0 4px 0 rgba(20, 10, 50, 0.35), 0 10px 30px rgba(20, 10, 50, 0.4);
+}
+#score.bump { animation: bump 0.28s ease-out; }
+@keyframes bump { 0% { transform: scale(1); } 35% { transform: scale(1.14); } 100% { transform: scale(1); } }
+.pips { display: flex; gap: 6px; height: 10px; }
+.pips i { width: 10px; height: 10px; border-radius: 50%; background: rgba(255, 255, 255, 0.22); transition: background 0.15s, transform 0.15s; }
+.pips i.on { background: var(--gold); transform: scale(1.25); box-shadow: 0 0 10px rgba(255, 216, 107, 0.8); }
+.pips.fever i { animation: pipFever 0.5s ease-in-out infinite alternate; }
+@keyframes pipFever { from { transform: scale(1.1); } to { transform: scale(1.55); } }
+#zone {
+  font-family: var(--font-mono); font-size: 11px; letter-spacing: 0.12em; text-transform: uppercase; white-space: nowrap;
+  color: var(--ink); background: var(--panel); border: 1px solid var(--line); border-radius: 999px; padding: 4px 11px;
+  backdrop-filter: blur(8px); -webkit-backdrop-filter: blur(8px);
+}
+.right { justify-self: end; pointer-events: auto; }
+#mute {
+  font-family: var(--font-mono); font-size: 12px; letter-spacing: 0.1em; text-transform: uppercase;
+  color: var(--ink); background: var(--panel); border: 1px solid var(--line); border-radius: 999px;
+  padding: 8px 14px; cursor: pointer; backdrop-filter: blur(8px); -webkit-backdrop-filter: blur(8px);
+}
+button:focus-visible { outline: 3px solid var(--gold); outline-offset: 3px; }
+
+#pop {
+  position: fixed; left: 0; right: 0; top: clamp(175px, 29vh, 250px); text-align: center; pointer-events: none;
+  font-size: clamp(22px, 5vw, 34px); font-weight: 800; letter-spacing: 0.04em; text-transform: uppercase;
+  color: var(--gold); text-shadow: 0 3px 0 rgba(40, 20, 0, 0.35), 0 0 24px rgba(255, 200, 80, 0.6);
+  opacity: 0; padding-inline: 16px;
+}
+#pop.show { animation: pop 0.95s ease-out; }
+@keyframes pop {
+  0% { opacity: 0; transform: translateY(10px) scale(0.85); }
+  14% { opacity: 1; transform: translateY(0) scale(1.08); }
+  70% { opacity: 1; }
+  100% { opacity: 0; transform: translateY(-28px) scale(1); }
+}
+#banner {
+  position: fixed; left: 0; right: 0; top: 38%; text-align: center; pointer-events: none; opacity: 0; padding-inline: 16px;
+  display: flex; flex-direction: column; gap: 6px; align-items: center;
+}
+#banner b { font-size: clamp(40px, 11vw, 72px); font-weight: 800; letter-spacing: 0.05em; text-transform: uppercase; line-height: 1; text-shadow: 0 5px 0 rgba(20, 10, 50, 0.35), 0 12px 36px rgba(20, 10, 50, 0.5); }
+#banner span { font-family: var(--font-mono); font-size: 14px; letter-spacing: 0.14em; text-transform: uppercase; color: var(--gold); text-shadow: 0 2px 10px rgba(20, 10, 50, 0.6); }
+#banner.show { animation: banner 2.1s ease-out; }
+@keyframes banner {
+  0% { opacity: 0; transform: scale(0.8); letter-spacing: 0.3em; }
+  14% { opacity: 1; transform: scale(1); }
+  75% { opacity: 1; }
+  100% { opacity: 0; transform: translateY(-20px); }
+}
+#bestTag {
+  position: fixed; left: 0; top: 0; display: none; pointer-events: none;
+  font-family: var(--font-mono); font-size: 11px; letter-spacing: 0.14em; color: var(--accent-ink);
+  background: var(--gold); border-radius: 6px; padding: 2px 7px; white-space: nowrap;
+}
+
+.card {
+  position: fixed; left: 0; right: 0;
+  bottom: calc(env(safe-area-inset-bottom, 0px) + 12px);
+  margin-inline: auto; width: min(100% - 32px, 480px);
+  max-height: calc(100% - 150px); overflow-y: auto; touch-action: pan-y;
+  background: var(--panel); border: 1px solid var(--line); border-radius: 22px;
+  padding: 18px 18px 16px; backdrop-filter: blur(14px); -webkit-backdrop-filter: blur(14px);
+  box-shadow: 0 24px 60px rgba(8, 4, 30, 0.45);
+  display: flex; flex-direction: column; gap: 12px;
+  animation: rise 0.45s cubic-bezier(.2, .9, .3, 1);
+}
+@keyframes rise { from { opacity: 0; transform: translateY(24px); } to { opacity: 1; transform: none; } }
+.card h1 { margin: 0; font-size: clamp(38px, 9vw, 52px); font-weight: 800; letter-spacing: 0.06em; line-height: 1; }
+.card h2 { margin: 0; font-size: 13px; font-family: var(--font-mono); font-weight: 500; letter-spacing: 0.16em; text-transform: uppercase; color: var(--ink-dim); }
+.card p { margin: 0; color: var(--ink-dim); font-size: 16px; line-height: 1.4; max-width: 42ch; }
+.rules { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 8px; }
+.rules div { font-size: 13px; line-height: 1.3; color: var(--ink); background: rgba(255, 255, 255, 0.07); border-radius: 12px; padding: 9px 10px 10px; min-width: 0; }
+.rules div b { display: block; font-family: var(--font-mono); font-weight: 500; font-size: 11px; letter-spacing: 0.12em; text-transform: uppercase; color: var(--gold); margin-bottom: 3px; }
+@media (max-width: 440px) { .rules { grid-template-columns: 1fr; gap: 6px; } .rules div { display: flex; gap: 10px; align-items: baseline; padding: 7px 10px; } .rules div b { margin: 0; min-width: 5.2em; } }
+
+.modes { display: flex; gap: 6px; }
+.seg {
+  flex: 1; min-width: 0; font-family: var(--font-mono); font-size: 12px; letter-spacing: 0.08em; text-transform: uppercase;
+  color: var(--ink); background: rgba(255, 255, 255, 0.07); border: 1px solid transparent; border-radius: 10px; padding: 9px 8px; cursor: pointer;
+}
+.seg[aria-pressed="true"] { background: var(--gold); color: var(--accent-ink); font-weight: 500; }
+.themes { display: flex; align-items: center; gap: 8px; }
+.themes > span { font-family: var(--font-mono); font-size: 11px; letter-spacing: 0.14em; text-transform: uppercase; color: var(--ink-dim); margin-right: auto; }
+.swatch {
+  position: relative; width: 36px; height: 36px; border-radius: 11px; border: 2px solid transparent; padding: 0; cursor: pointer; flex: none;
+  font-family: var(--font-mono); font-size: 11px; color: #fff; text-shadow: 0 1px 3px rgba(0, 0, 0, 0.8);
+}
+.swatch[aria-pressed="true"] { border-color: var(--gold); box-shadow: 0 0 0 2px rgba(255, 216, 107, 0.35); }
+.swatch:disabled { cursor: not-allowed; filter: grayscale(0.85) brightness(0.6); }
+
+.btn {
+  font-family: var(--font-display); font-size: 19px; font-weight: 800; letter-spacing: 0.02em;
+  color: var(--accent-ink); background: var(--accent); border: 0; border-radius: 14px; padding: 14px 20px;
+  cursor: pointer; box-shadow: 0 5px 0 #c27a1c; transition: transform 0.08s, box-shadow 0.08s;
+}
+.btn:active { transform: translateY(4px); box-shadow: 0 1px 0 #c27a1c; }
+.ghostbtn {
+  font-family: var(--font-mono); font-size: 12px; letter-spacing: 0.1em; text-transform: uppercase;
+  color: var(--ink); background: transparent; border: 1px solid var(--line); border-radius: 10px; padding: 9px 12px; cursor: pointer;
+}
+.result { display: flex; align-items: flex-end; justify-content: space-between; gap: 12px; flex-wrap: wrap; }
+.big { font-size: clamp(60px, 15vw, 84px); font-weight: 800; line-height: 0.9; font-variant-numeric: tabular-nums; }
+.big small { display: block; font-family: var(--font-mono); font-weight: 400; font-size: 12px; letter-spacing: 0.16em; text-transform: uppercase; color: var(--ink-dim); margin-bottom: 8px; }
+.stat { font-family: var(--font-mono); font-size: 12px; letter-spacing: 0.1em; color: var(--ink-dim); text-align: right; line-height: 1.7; }
+.stat b { color: var(--ink); font-weight: 500; font-size: 17px; }
+.badge { display: inline-block; background: var(--gold); color: var(--accent-ink); font-weight: 800; font-size: 11px; letter-spacing: 0.14em; text-transform: uppercase; padding: 3px 8px; border-radius: 6px; margin-left: 6px; vertical-align: middle; }
+.rank { display: flex; flex-direction: column; gap: 6px; }
+.rankRow { display: flex; justify-content: space-between; gap: 10px; font-family: var(--font-mono); font-size: 12px; letter-spacing: 0.08em; text-transform: uppercase; color: var(--ink-dim); }
+.rankRow b { color: var(--ink); font-weight: 500; }
+.bar { height: 8px; border-radius: 99px; background: rgba(255, 255, 255, 0.12); overflow: hidden; }
+.bar i { display: block; height: 100%; width: 0; background: linear-gradient(90deg, var(--accent), var(--gold)); border-radius: 99px; transition: width 0.7s cubic-bezier(.2, .9, .3, 1); }
+.note { font-size: 14px; color: var(--accent-ink); background: var(--gold); border-radius: 10px; padding: 8px 12px; font-weight: 800; }
+.actions { display: flex; flex-direction: column; gap: 8px; }
+.subactions { display: flex; gap: 8px; }
+.subactions .ghostbtn { flex: 1; min-width: 0; }
+.tabs { display: flex; gap: 6px; }
+.rows { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 6px; max-height: min(46vh, 360px); overflow-y: auto; touch-action: pan-y; }
+.rows li { display: grid; grid-template-columns: 28px minmax(0, 1fr) auto auto; gap: 10px; align-items: center; background: rgba(255, 255, 255, 0.07); border-radius: 10px; padding: 9px 10px; font-size: 15px; }
+.rows li.me { background: rgba(255, 216, 107, 0.2); outline: 1px solid var(--gold); }
+.rows li.empty { display: block; color: var(--ink-dim); font-size: 14px; line-height: 1.4; }
+.rows .rk { font-family: var(--font-mono); font-size: 12px; color: var(--ink-dim); }
+.rows .nm { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.rows .sc { font-weight: 800; font-variant-numeric: tabular-nums; }
+.rows .fl { font-family: var(--font-mono); font-size: 11px; color: var(--ink-dim); min-width: 4.5em; text-align: right; }
+.hint { font-family: var(--font-mono); font-size: 12px; letter-spacing: 0.06em; color: var(--ink-dim); text-align: center; -webkit-user-select: text; user-select: text; overflow-wrap: anywhere; }
+
+#nogl { position: fixed; inset: 0; display: none; align-items: center; justify-content: center; text-align: center; padding: 24px; font-size: 20px; }
+@media (prefers-reduced-motion: reduce) { .card, #pop.show, #score.bump, #banner.show, #glow.on, .pips.fever i { animation-duration: 0.01s; } }
+
+html, body { margin: 0; overscroll-behavior: none; }
+[hidden] { display: none !important; }
+button { touch-action: manipulation; }
+.hud { padding-inline: max(16px, env(safe-area-inset-left, 0px)) max(16px, env(safe-area-inset-right, 0px)); }
+#score { font-size: clamp(48px, min(15vw, 15vh), 116px); }
+.seg, .ghostbtn { min-height: 44px; }
+.swatch { width: 40px; height: 40px; }
+#mute { min-height: 40px; }
+@media (max-height: 520px) and (orientation: landscape) {
+  .card { left: auto; right: max(16px, env(safe-area-inset-right, 0px)); margin-inline: 0; width: min(360px, 46vw); max-height: calc(100% - 24px); bottom: 12px; padding: 14px; gap: 10px; }
+  .card h1 { font-size: 36px; }
+  .card p { font-size: 14px; }
+  .big { font-size: 56px; }
+  #pop { top: 90px; }
+  #banner { top: 30%; }
+}
+</style>
 </head>
 <body>
-  <div class="panel">
-    <h1>First-person Playground</h1>
-    <p>WASD / arrow keys — move · Space — jump</p>
-    <p id="look-status">Click to look around · Drag also works</p>
-    <p>Mouse — rotate camera · Esc — release cursor</p>
-    <label for="texture">Choose baseplate PNG</label>
-    <input id="texture" type="file" accept="image/png">
-    <p id="status" role="status">Baseplate PNG texture active.</p>
+
+<div id="sky"></div>
+<canvas id="gl"></canvas>
+<div id="glow"></div>
+
+<header class="hud">
+  <div class="best">BEST<b id="best">0</b></div>
+  <div class="mid">
+    <div id="score" aria-live="off">0</div>
+    <div class="pips" id="pips" title="Perfect streak. Five in a row starts Fever."><i></i><i></i><i></i><i></i><i></i></div>
+    <div id="zone">Zone 1 · Calm</div>
   </div>
+  <div class="right"><button id="mute" type="button">Sound on</button></div>
+</header>
+
+<div id="pop" role="status"></div>
+<div id="banner"><b id="bannerTitle"></b><span id="bannerSub"></span></div>
+<div id="bestTag">BEST</div>
+
+<section class="card" id="intro">
+  <h1>PLINTH</h1>
+  <p>Drop each block onto the tower. Whatever hangs over gets sliced off. Every 10 floors a new zone changes the rules.</p>
+  <div class="rules">
+    <div><b>Drop</b>Tap, click or press Space</div>
+    <div><b>Perfect</b>Land dead center to keep your width</div>
+    <div><b>Fever</b>Five perfects in a row, double points</div>
+  </div>
+  <div class="modes"></div>
+  <div class="themes"></div>
+  <div class="rankRow"><span>Rank <b class="rankLabel">Apprentice</b></span><span class="floorsLabel">0 floors built</span></div>
+  <button class="btn" id="play" type="button" disabled>Loading...</button>
+</section>
+
+<section class="card" id="over" hidden>
+  <h2 id="overTitle">Tower fell</h2>
+  <div class="result">
+    <div class="big"><small>Score</small><span id="finalScore">0</span></div>
+    <div class="stat">BEST <b id="finalBest">0</b><span class="badge" id="newBest" hidden>New best</span><br>FLOORS <b id="finalFloors">0</b><br>PERFECTS <b id="finalPerfects">0</b></div>
+  </div>
+  <div class="rank">
+    <div class="rankRow"><span>Rank <b id="rankName">Apprentice</b></span><span id="rankNote"></span></div>
+    <div class="bar"><i id="rankBar"></i></div>
+  </div>
+  <div class="note" id="unlockNote" hidden></div>
+  <div class="modes"></div>
+  <div class="themes"></div>
+  <div class="actions">
+    <button class="btn" id="again" type="button">Play again</button>
+    <div class="subactions">
+      <button class="ghostbtn" id="copy" type="button">Copy result</button>
+    </div>
+  </div>
+  <div class="hint" id="hint">or tap anywhere / press Space</div>
+</section>
+
+<div id="nogl">This game needs WebGL, and it could not start in this browser.</div>
+
+<script>
+window.PLINTH_BOOT = function () {
+  'use strict';
+  var CG = window.PLINTH_SDK || null;
+  var $ = function (s) { return document.querySelector(s); };
+  var $$ = function (s) { return Array.prototype.slice.call(document.querySelectorAll(s)); };
+  var canvas = $('#gl');
+  var renderer = null;
+  try {
+    if (!window.THREE) throw new Error('three missing');
+    renderer = new THREE.WebGLRenderer({ canvas: canvas, antialias: true, alpha: true });
+  } catch (err) {
+    $('#nogl').style.display = 'flex';
+    return;
+  }
+  renderer.setClearColor(0x000000, 0);
+  renderer.shadowMap.enabled = true;
+  renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+
+  /* ---------- constants ---------- */
+  var H = 1, BASE = 4, RANGE = 5.2, TOL = 0.18, GRAVITY = 24, FEVER_DROPS = 6;
+  var COARSE = !!(window.matchMedia && window.matchMedia('(pointer: coarse)').matches);
+
+  /* ---------- save data ---------- */
+  var store = {
+    get: function (k) {
+      try { if (CG && CG.data) { var v = CG.data.getItem(k); if (v !== null && v !== undefined) return v; } } catch (e) {}
+      try { return localStorage.getItem(k); } catch (e) { return null; }
+    },
+    set: function (k, v) {
+      try { if (CG && CG.data) CG.data.setItem(k, v); } catch (e) {}
+      try { localStorage.setItem(k, v); } catch (e) {}
+    }
+  };
+  function gp(fn) { try { if (CG && CG.game && CG.game[fn]) CG.game[fn](); } catch (e) {} }
+  var SAVE_KEY = 'plinth-save-v2';
+  var save = { bestE: 0, fE: 0, bestD: 0, fD: 0, dDate: '', floors: 0, runs: 0, perfects: 0, theme: 0, mode: 'endless' };
+  try {
+    var raw = store.get(SAVE_KEY);
+    if (raw) { var o = JSON.parse(raw); for (var key in save) { if (o && o[key] !== undefined) save[key] = o[key]; } }
+  } catch (e) {}
+  function persist() { store.set(SAVE_KEY, JSON.stringify(save)); }
+  function dateKey() { return new Date().toISOString().slice(0, 10); }
+  function dateLabel() { return new Date().toLocaleDateString(undefined, { month: 'short', day: 'numeric', timeZone: 'UTC' }) + ' UTC'; }
+  function checkDaily() { var k = dateKey(); if (save.dDate !== k) { save.dDate = k; save.bestD = 0; save.fD = 0; persist(); } }
+  checkDaily();
+  if (save.mode !== 'daily') save.mode = 'endless';
+  function modeBest() { return save.mode === 'daily' ? save.bestD : save.bestE; }
+  function modeFloors() { return save.mode === 'daily' ? save.fD : save.fE; }
+
+  function mulberry32(a) {
+    return function () {
+      a |= 0; a = a + 0x6D2B79F5 | 0;
+      var t = Math.imul(a ^ a >>> 15, 1 | a);
+      t = t + Math.imul(t ^ t >>> 7, 61 | t) ^ t;
+      return ((t ^ t >>> 14) >>> 0) / 4294967296;
+    };
+  }
+  function seedFromDate() {
+    var s = 'plinth-' + dateKey(), h = 2166136261;
+    for (var i = 0; i < s.length; i++) { h = Math.imul(h ^ s.charCodeAt(i), 16777619); }
+    return h >>> 0;
+  }
+
+  /* ---------- themes and ranks ---------- */
+  var THEMES = [
+    { name: 'Spectrum', unlock: 0, fn: function (n) { return new THREE.Color().setHSL(((190 + n * 6) % 360) / 360, 0.62, 0.58); } },
+    { name: 'Ember', unlock: 15, fn: function (n) { return new THREE.Color().setHSL((6 + 26 * (0.5 + 0.5 * Math.sin(n * 0.28))) / 360, 0.78, 0.5 + 0.08 * Math.sin(n * 0.5)); } },
+    { name: 'Glacier', unlock: 30, fn: function (n) { return new THREE.Color().setHSL((188 + 34 * (0.5 + 0.5 * Math.sin(n * 0.22))) / 360, 0.55, 0.62); } },
+    { name: 'Candy', unlock: 50, fn: function (n) { return new THREE.Color().setHSL(((330 + n * 14) % 360) / 360, 0.72, 0.72); } },
+    { name: 'Noir', unlock: 75, fn: function (n) { return n % 5 === 0 ? new THREE.Color().setHSL(0.12, 0.85, 0.55) : new THREE.Color().setHSL(0.65, 0.06, 0.3 + (n % 2) * 0.12); } }
+  ];
+  var RANKS = [[0, 'Apprentice'], [50, 'Bricklayer'], [150, 'Mason'], [400, 'Architect'], [900, 'Skyliner'], [2000, 'Titan']];
+  function rankInfo(f) {
+    var i = 0;
+    for (var k = 0; k < RANKS.length; k++) if (f >= RANKS[k][0]) i = k;
+    var c = RANKS[i], nx = RANKS[i + 1];
+    return { name: c[1], next: nx ? nx[1] : null, pct: nx ? (f - c[0]) / (nx[0] - c[0]) : 1, need: nx ? nx[0] - f : 0 };
+  }
+  function maxBest() { return Math.max(save.bestE, save.bestD); }
+  function themeColor(n) {
+    var t = THEMES[save.theme] || THEMES[0];
+    return t.fn(n);
+  }
+  if (!THEMES[save.theme] || THEMES[save.theme].unlock > maxBest()) save.theme = 0;
+
+  /* ---------- scene ---------- */
+  var scene = new THREE.Scene();
+  var camera = new THREE.OrthographicCamera(-10, 10, 10, -10, 0.1, 400);
+  var viewH = 15;
+
+  scene.add(new THREE.HemisphereLight(0xdfe6ff, 0x4a3470, 0.95));
+  var sun = new THREE.DirectionalLight(0xfff1dd, 1.05);
+  sun.castShadow = true;
+  sun.shadow.mapSize.set(COARSE ? 512 : 1024, COARSE ? 512 : 1024);
+  sun.shadow.camera.left = -9; sun.shadow.camera.right = 9;
+  sun.shadow.camera.top = 9; sun.shadow.camera.bottom = -9;
+  sun.shadow.camera.near = 1; sun.shadow.camera.far = 60;
+  sun.shadow.bias = -0.0008;
+  scene.add(sun); scene.add(sun.target);
+
+  var geo = new THREE.BoxGeometry(1, 1, 1);
+
+  var starGroup = new THREE.Group();
+  scene.add(starGroup);
+  var starGeo = new THREE.BufferGeometry();
+  var sp = new Float32Array(360 * 3);
+  for (var i = 0; i < 360; i++) {
+    sp[i * 3] = (Math.random() - 0.5) * 80;
+    sp[i * 3 + 1] = (Math.random() - 0.5) * 60;
+    sp[i * 3 + 2] = (Math.random() - 0.5) * 80;
+  }
+  starGeo.setAttribute('position', new THREE.BufferAttribute(sp, 3));
+  var starMat = new THREE.PointsMaterial({ color: 0xffffff, size: 2.4, sizeAttenuation: false, transparent: true, opacity: 0, depthWrite: false });
+  starGroup.add(new THREE.Points(starGeo, starMat));
+
+  /* ---------- sky ---------- */
+  var skyEl = $('#sky');
+  var cTop0 = new THREE.Color('#3a4a8c'), cTop1 = new THREE.Color('#07041a');
+  var cBot0 = new THREE.Color('#f0a878'), cBot1 = new THREE.Color('#2a1d5e');
+  var tmpA = new THREE.Color(), tmpB = new THREE.Color();
+  var skyT = 0, lastSky = '';
+  function paintSky() {
+    tmpA.copy(cTop0).lerp(cTop1, skyT);
+    tmpB.copy(cBot0).lerp(cBot1, skyT);
+    var s = 'linear-gradient(180deg,' + tmpA.getStyle() + ',' + tmpB.getStyle() + ')';
+    if (s !== lastSky) { skyEl.style.background = s; lastSky = s; }
+  }
+
+  /* ---------- audio ---------- */
+  var actx = null, muted = false, sdkMuted = false;
+  muted = store.get('plinth-muted') === '1';
+  function ac() {
+    if (!actx) { try { actx = new (window.AudioContext || window.webkitAudioContext)(); } catch (e) { actx = null; } }
+    if (actx && actx.state === 'suspended') actx.resume();
+    return actx;
+  }
+  function tone(freq, dur, type, vol, delay, endFreq) {
+    if (sdkMuted) return;
+    var a = ac(); if (!a || muted) return;
+    var t = a.currentTime + (delay || 0);
+    var o = a.createOscillator(), g = a.createGain();
+    o.type = type || 'sine';
+    o.frequency.setValueAtTime(freq, t);
+    if (endFreq) o.frequency.exponentialRampToValueAtTime(endFreq, t + dur);
+    g.gain.setValueAtTime(0.0001, t);
+    g.gain.exponentialRampToValueAtTime(vol || 0.15, t + 0.01);
+    g.gain.exponentialRampToValueAtTime(0.0001, t + dur);
+    o.connect(g); g.connect(a.destination);
+    o.start(t); o.stop(t + dur + 0.05);
+  }
+  var PENT = [0, 2, 4, 7, 9];
+  function noteFreq(step, base) { return base * Math.pow(2, (PENT[step % 5] + 12 * Math.floor(step / 5)) / 12); }
+  var muteBtn = $('#mute');
+  function paintMute() { muteBtn.textContent = (muted || sdkMuted) ? 'Sound off' : 'Sound on'; }
+  paintMute();
+  muteBtn.addEventListener('click', function () {
+    muted = !muted; paintMute();
+    store.set('plinth-muted', muted ? '1' : '0');
+    if (!muted) tone(660, 0.12, 'triangle', 0.12);
+  });
+
+  /* ---------- zones ---------- */
+  var MUTS = {
+    calm: { name: 'Calm', desc: 'Steady blocks' },
+    gust: { name: 'Gust', desc: 'Speed surges and slows' },
+    sprint: { name: 'Sprint', desc: 'Fast blocks, +1 per drop' },
+    ghost: { name: 'Ghost', desc: 'Blocks fade mid-swing' },
+    gold: { name: 'Gold rush', desc: '+2 points per drop' }
+  };
+  var rng = Math.random, zoneKeys = ['calm'];
+  function zoneMut(z) {
+    while (zoneKeys.length <= z) {
+      var prev = zoneKeys[zoneKeys.length - 1];
+      var pool = ['gust', 'sprint', 'ghost', 'gold'].filter(function (k) { return k !== prev; });
+      zoneKeys.push(pool[Math.floor(rng() * pool.length)]);
+    }
+    return zoneKeys[z];
+  }
+
+  /* ---------- game state ---------- */
+  var stack = [], cur = null, debris = [], rings = [], marker = null;
+  var score = 0, combo = 0, perfects = 0, pendingGrow = 0, feverLeft = 0, passedBest = false;
+  var state = 'menu', overAt = 0, cardTimer = 0, clock = 0, shake = 0;
+  var camY = 0, camZoom = 1, zoomTarget = 1;
+
+  var scoreEl = $('#score'), bestEl = $('#best'), popEl = $('#pop'), zoneEl = $('#zone'), glowEl = $('#glow'), pipsEl = $('#pips');
+  var pipEls = $$('#pips i');
+
+  function makeBlock(w, d, x, y, z, color, rough) {
+    var mat = new THREE.MeshStandardMaterial({ color: color, roughness: rough == null ? 0.5 : rough, metalness: 0.08, emissive: 0xffffff, emissiveIntensity: 0 });
+    var m = new THREE.Mesh(geo, mat);
+    m.scale.set(w, H, d);
+    m.position.set(x, y, z);
+    m.castShadow = true; m.receiveShadow = true;
+    scene.add(m);
+    return m;
+  }
+
+  function clearAll() {
+    stack.forEach(function (e) { scene.remove(e.mesh); });
+    if (cur) scene.remove(cur.mesh);
+    debris.forEach(function (d) { scene.remove(d.mesh); });
+    rings.forEach(function (r) { scene.remove(r.mesh); });
+    stack = []; cur = null; debris = []; rings = [];
+  }
+
+  function placeMarker() {
+    if (marker) { scene.remove(marker); marker = null; }
+    var f = modeFloors();
+    if (f < 3) return;
+    var g = new THREE.RingGeometry(0.9, 1, 4, 1);
+    g.rotateZ(Math.PI / 4); g.rotateX(-Math.PI / 2);
+    var mat = new THREE.MeshBasicMaterial({ color: 0xffd86b, transparent: true, opacity: 0.75, side: THREE.DoubleSide, depthWrite: false });
+    marker = new THREE.Mesh(g, mat);
+    marker.position.set(0, f * H + 0.52, 0);
+    var s = BASE * 0.7071 * 1.12;
+    marker.scale.set(s, 1, s);
+    scene.add(marker);
+  }
+
+  function setupRun() {
+    checkDaily();
+    if (save.mode === 'daily') rng = mulberry32(seedFromDate());
+    else rng = mulberry32((Math.random() * 4294967296) >>> 0);
+    zoneKeys = ['calm'];
+  }
+
+  function reset() {
+    clearAll();
+    setupRun();
+    score = 0; combo = 0; perfects = 0; pendingGrow = 0; feverLeft = 0; passedBest = false;
+    glowEl.classList.remove('on');
+    var base = makeBlock(BASE, BASE, 0, 0.5 - 60, 0, new THREE.Color().setHSL(0.64, 0.22, 0.26), 0.85);
+    base.scale.y = 120;
+    stack.push({ mesh: base, x: 0, z: 0, w: BASE, d: BASE, flash: 0 });
+    placeMarker();
+    bestEl.textContent = modeBest();
+    paintHud();
+    spawn();
+  }
+
+  function paintZone(z, mut) {
+    zoneEl.textContent = (save.mode === 'daily' ? 'Daily · ' : '') + 'Zone ' + (z + 1) + ' · ' + MUTS[mut].name;
+  }
+
+  function spawn() {
+    var n = stack.length, top = stack[n - 1];
+    var w = top.w, d = top.d;
+    if (pendingGrow > 0) { w = Math.min(BASE, w + pendingGrow); d = Math.min(BASE, d + pendingGrow); pendingGrow = 0; }
+    var axis = n % 2 ? 'x' : 'z';
+    var phase = (n % 4 < 2) ? 0 : Math.PI;
+    var x = top.x, z = top.z;
+    if (axis === 'x') x = top.x + Math.cos(phase) * RANGE; else z = top.z + Math.cos(phase) * RANGE;
+    var zone = Math.floor((n - 1) / 10), mut = zoneMut(zone);
+    var col = feverLeft > 0 ? new THREE.Color().setHSL(0.115, 0.92, 0.6) : themeColor(n);
+    var mesh = makeBlock(w, d, x, n * H, z, col);
+    if (mut === 'ghost') mesh.material.transparent = true;
+    cur = { mesh: mesh, x: x, z: z, w: w, d: d, axis: axis, phase: phase, n: n, mut: mut };
+    paintZone(zone, mut);
+    if (state === 'play' && n > 1 && (n - 1) % 10 === 0) {
+      showBanner('Zone ' + (zone + 1), MUTS[mut].name + ' · ' + MUTS[mut].desc);
+      tone(300, 0.5, 'triangle', 0.12, 0, 900);
+    }
+  }
+
+  function speedFor(n) { return 1.0 + Math.min(n, 70) * 0.028; }
+  function mutSpeed(mut) {
+    if (mut === 'sprint') return 1.4;
+    if (mut === 'gust') return 1 + 0.5 * Math.sin(clock * 2.2);
+    return 1;
+  }
+
+  /* ---------- effects ---------- */
+  function spawnDebris(ax, center, len, dir) {
+    var piece = { x: cur.x, z: cur.z, w: cur.w, d: cur.d };
+    if (ax === 'x') { piece.x = center; piece.w = len; } else { piece.z = center; piece.d = len; }
+    var m = makeBlock(piece.w, piece.d, piece.x, cur.n * H, piece.z, cur.mesh.material.color.clone());
+    var v = new THREE.Vector3(0, 1.2, 0);
+    var spin = new THREE.Vector3();
+    if (ax === 'x') { v.x = dir * 1.6; spin.z = -dir * (1.5 + Math.random()); } else { v.z = dir * 1.6; spin.x = dir * (1.5 + Math.random()); }
+    debris.push({ mesh: m, vel: v, spin: spin });
+  }
+
+  function spawnRing(e, gold) {
+    var g = new THREE.RingGeometry(0.86, 1, 4, 1);
+    g.rotateZ(Math.PI / 4); g.rotateX(-Math.PI / 2);
+    var mat = new THREE.MeshBasicMaterial({ color: gold ? 0xffd86b : 0xffffff, transparent: true, opacity: 0.95, side: THREE.DoubleSide, depthWrite: false });
+    var m = new THREE.Mesh(g, mat);
+    m.position.set(e.x, e.mesh.position.y + H / 2 + 0.03, e.z);
+    var sx = e.w * 0.7071, sz = e.d * 0.7071;
+    m.scale.set(sx, 1, sz);
+    scene.add(m);
+    rings.push({ mesh: m, sx: sx, sz: sz, t: 0 });
+  }
+
+  function showPop(text) {
+    popEl.textContent = text;
+    popEl.classList.remove('show'); void popEl.offsetWidth; popEl.classList.add('show');
+  }
+  var bannerEl = $('#banner');
+  function showBanner(title, sub) {
+    $('#bannerTitle').textContent = title; $('#bannerSub').textContent = sub;
+    bannerEl.classList.remove('show'); void bannerEl.offsetWidth; bannerEl.classList.add('show');
+  }
+
+  function paintHud() {
+    scoreEl.textContent = score;
+    for (var i = 0; i < pipEls.length; i++) pipEls[i].classList.toggle('on', feverLeft > 0 || i < combo);
+    pipsEl.classList.toggle('fever', feverLeft > 0);
+  }
+  function bumpScore() { scoreEl.classList.remove('bump'); void scoreEl.offsetWidth; scoreEl.classList.add('bump'); }
+
+  function startFever() {
+    feverLeft = FEVER_DROPS;
+    glowEl.classList.add('on');
+    shake = 0.3;
+    tone(523, 0.5, 'triangle', 0.13); tone(659, 0.5, 'triangle', 0.11, 0.06); tone(784, 0.6, 'triangle', 0.11, 0.12); tone(1047, 0.7, 'sine', 0.1, 0.18);
+  }
+  function endFever() {
+    feverLeft = 0; combo = 0;
+    glowEl.classList.remove('on');
+  }
+
+  /* ---------- core actions ---------- */
+  function drop() {
+    if (!cur || state !== 'play') return;
+    var top = stack[stack.length - 1], ax = cur.axis, sk = ax === 'x' ? 'w' : 'd';
+    var tc = top[ax], ts = top[sk], cc = cur[ax], cs = cur[sk];
+    var delta = cc - tc;
+    var lo = Math.max(tc - ts / 2, cc - cs / 2), hi = Math.min(tc + ts / 2, cc + cs / 2);
+
+    if (hi - lo <= 0.03) { missAll(delta); return; }
+
+    var wasFever = feverLeft > 0;
+    var perfect = Math.abs(delta) <= (wasFever ? TOL * 2.2 : TOL);
+    var points = 1;
+    if (perfect) {
+      cur[ax] = tc;
+      combo++; perfects++;
+      points += Math.min(combo, 5);
+      if (combo >= 3 && Math.min(cur.w, cur.d) < BASE) pendingGrow = 0.3;
+    } else {
+      combo = 0;
+      var cl = cc - cs / 2, cr = cc + cs / 2;
+      if (lo - cl > 0.01) spawnDebris(ax, (cl + lo) / 2, lo - cl, -1);
+      if (cr - hi > 0.01) spawnDebris(ax, (hi + cr) / 2, cr - hi, 1);
+      cur[ax] = (lo + hi) / 2; cur[sk] = hi - lo;
+    }
+    if (wasFever) points *= 2;
+    if (cur.mut === 'sprint') points += 1;
+    if (cur.mut === 'gold') points += 2;
+
+    cur.mesh.position[ax] = cur[ax];
+    cur.mesh.scale[ax === 'x' ? 'x' : 'z'] = cur[sk];
+    cur.mesh.material.transparent = false; cur.mesh.material.opacity = 1; cur.mesh.material.needsUpdate = true;
+
+    var entry = { mesh: cur.mesh, x: cur.x, z: cur.z, w: cur.w, d: cur.d, flash: perfect ? 0.9 : 0.35 };
+    stack.push(entry);
+    score += points;
+
+    var feverStarted = false;
+    if (wasFever) { feverLeft--; if (feverLeft <= 0) endFever(); }
+    else if (perfect && combo >= 5) { startFever(); feverStarted = true; }
+
+    if (perfect) {
+      spawnRing(entry, wasFever || feverStarted);
+      var step = Math.min(combo, 10) + 4;
+      tone(noteFreq(step, 330), 0.35, 'triangle', 0.16);
+      tone(noteFreq(step + 2, 330), 0.4, 'sine', 0.1, 0.07);
+    } else {
+      tone(noteFreq(stack.length % 12, 196), 0.18, 'triangle', 0.14);
+    }
+
+    var newBestNow = !passedBest && modeBest() > 0 && score > modeBest();
+    if (newBestNow) passedBest = true;
+    if (feverStarted) showPop('Fever! Double points');
+    else if (newBestNow) showPop('New best!');
+    else if (perfect) showPop((combo >= 2 ? 'Perfect x' + combo : 'Perfect') + '  +' + points);
+
+    paintHud(); bumpScore();
+    cur = null;
+    spawn();
+  }
+
+  function missAll(delta) {
+    var dir = delta >= 0 ? 1 : -1;
+    var v = new THREE.Vector3(0, 1.5, 0), spin = new THREE.Vector3();
+    if (cur.axis === 'x') { v.x = dir * 2.2; spin.z = -dir * 2; } else { v.z = dir * 2.2; spin.x = dir * 2; }
+    cur.mesh.material.transparent = false; cur.mesh.material.opacity = 1; cur.mesh.material.needsUpdate = true;
+    debris.push({ mesh: cur.mesh, vel: v, spin: spin });
+    cur = null;
+    shake = 0.5;
+    feverLeft = 0; combo = 0; glowEl.classList.remove('on'); paintHud();
+    tone(150, 0.45, 'sawtooth', 0.16, 0, 45);
+    endGame();
+  }
+
+  function endGame() {
+    state = 'over'; overAt = performance.now();
+    gp('gameplayStop');
+    var floors = stack.length - 1;
+    var prevMax = maxBest(), prevRank = rankInfo(save.floors).name;
+    var isNew = score > modeBest();
+    if (isNew) {
+      if (save.mode === 'daily') { save.bestD = score; save.fD = floors; } else { save.bestE = score; save.fE = floors; }
+    }
+    save.floors += floors; save.runs += 1; save.perfects += perfects;
+    persist();
+
+    bestEl.textContent = modeBest();
+    $('#finalScore').textContent = score;
+    $('#finalBest').textContent = modeBest();
+    $('#finalFloors').textContent = floors;
+    $('#finalPerfects').textContent = perfects;
+    $('#newBest').hidden = !isNew;
+    if (isNew && score >= 10) gp('happytime');
+    $('#overTitle').textContent = 'Tower fell · ' + (save.mode === 'daily' ? 'Daily ' + dateLabel() : 'Endless');
+
+    var r = rankInfo(save.floors);
+    $('#rankName').textContent = r.name;
+    $('#rankNote').textContent = r.next ? r.need + ' floors to ' + r.next : 'Top rank';
+    $('#rankBar').style.width = '0%';
+    setTimeout(function () { $('#rankBar').style.width = Math.round(r.pct * 100) + '%'; }, 120);
+
+    var notes = [];
+    if (r.name !== prevRank) notes.push('Rank up: ' + r.name);
+    THEMES.forEach(function (t) { if (t.unlock > prevMax && t.unlock <= maxBest()) notes.push('Unlocked theme: ' + t.name); });
+    var nEl = $('#unlockNote');
+    nEl.hidden = !notes.length; nEl.textContent = notes.join('  ·  ');
+
+    $('#hint').textContent = 'or tap anywhere / press Space';
+    renderMenus();
+
+    zoomTarget = Math.min(1, viewH / (floors * 0.82 + 10));
+    clearTimeout(cardTimer);
+    cardTimer = setTimeout(function () { $('#over').hidden = false; }, 650);
+  }
+
+  function start() {
+    clearTimeout(cardTimer);
+    ac();
+    $('#intro').hidden = true; $('#over').hidden = true;
+    reset();
+    zoomTarget = 1;
+    state = 'play';
+    gp('gameplayStart');
+  }
+
+  function action() {
+    if (state === 'play') drop();
+    else if (state === 'menu') start();
+    else if (state === 'over' && performance.now() - overAt > 700) start();
+  }
+
+  /* ---------- menus ---------- */
+  function renderMenus() {
+    $$('.modes').forEach(function (box) {
+      box.innerHTML = '';
+      [['endless', 'Endless'], ['daily', 'Daily · ' + dateLabel()]].forEach(function (m) {
+        var b = document.createElement('button');
+        b.type = 'button'; b.className = 'seg'; b.textContent = m[1];
+        b.setAttribute('aria-pressed', save.mode === m[0] ? 'true' : 'false');
+        b.addEventListener('click', function () {
+          save.mode = m[0]; persist();
+          bestEl.textContent = modeBest(); placeMarker(); renderMenus();
+        });
+        box.appendChild(b);
+      });
+    });
+    $$('.themes').forEach(function (box) {
+      box.innerHTML = '';
+      var lab = document.createElement('span'); lab.textContent = 'Theme'; box.appendChild(lab);
+      THEMES.forEach(function (t, i) {
+        var b = document.createElement('button');
+        b.type = 'button'; b.className = 'swatch';
+        var locked = t.unlock > maxBest();
+        b.style.background = 'linear-gradient(135deg,' + t.fn(0).getStyle() + ',' + t.fn(4).getStyle() + ' 55%,' + t.fn(9).getStyle() + ')';
+        b.setAttribute('aria-pressed', save.theme === i ? 'true' : 'false');
+        b.setAttribute('aria-label', t.name + (locked ? ', unlocks at score ' + t.unlock : ''));
+        b.title = locked ? t.name + ': reach a score of ' + t.unlock + ' to unlock' : t.name;
+        if (locked) { b.disabled = true; b.textContent = t.unlock; }
+        b.addEventListener('click', function () {
+          save.theme = i; persist(); renderMenus();
+          if (cur) cur.mesh.material.color.copy(themeColor(cur.n));
+        });
+        box.appendChild(b);
+      });
+    });
+    var r = rankInfo(save.floors);
+    $$('.rankLabel').forEach(function (e) { e.textContent = r.name; });
+    $$('.floorsLabel').forEach(function (e) { e.textContent = save.floors + ' floors built'; });
+  }
+
+  $('#copy').addEventListener('click', function () {
+    var text = 'Plinth ' + (save.mode === 'daily' ? 'Daily ' + dateLabel() : 'Endless') + ': ' + score + ' points, ' + $('#finalFloors').textContent + ' floors, ' + perfects + ' perfects';
+    var hint = $('#hint');
+    function fallback() { hint.textContent = text; }
+    try {
+      navigator.clipboard.writeText(text).then(function () { hint.textContent = 'Copied: ' + text; }, fallback);
+    } catch (e) { fallback(); }
+  });
+
+  window.addEventListener('pointerdown', function (e) {
+    if (e.target.closest && e.target.closest('button')) return;
+    ac();
+    action();
+  });
+  window.addEventListener('keydown', function (e) {
+    if (e.code === 'KeyM') { muteBtn.click(); return; }
+    if (e.code === 'Space' || e.code === 'Enter') {
+      if (e.target.closest && e.target.closest('button')) return;
+      e.preventDefault();
+      if (!e.repeat) action();
+    }
+  });
+  $('#play').addEventListener('click', action);
+  $('#again').addEventListener('click', function () { if (state === 'over') start(); });
+
+  /* ---------- resize ---------- */
+  function resize() {
+    var w = window.innerWidth, h = window.innerHeight;
+    renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, COARSE ? 1.75 : 2));
+    renderer.setSize(w, h, false);
+    var aspect = w / h;
+    viewH = aspect < 1 ? 14 / aspect : 15;
+    var viewW = viewH * aspect;
+    camera.left = -viewW / 2; camera.right = viewW / 2; camera.top = viewH / 2; camera.bottom = -viewH / 2;
+    camera.zoom = camZoom;
+    camera.updateProjectionMatrix();
+    starMat.size = 2.4 * Math.min(window.devicePixelRatio || 1, 2);
+  }
+  window.addEventListener('resize', resize);
+  resize();
+
+  /* ---------- frame ---------- */
+  var tagEl = $('#bestTag'), tagV = new THREE.Vector3();
+  function update(dt) {
+    clock += dt;
+    if (cur && (state === 'play' || state === 'menu')) {
+      cur.phase += dt * speedFor(cur.n) * mutSpeed(cur.mut);
+      var top = stack[stack.length - 1];
+      var p = Math.cos(cur.phase) * RANGE;
+      if (cur.axis === 'x') { cur.x = top.x + p; cur.mesh.position.x = cur.x; }
+      else { cur.z = top.z + p; cur.mesh.position.z = cur.z; }
+      if (cur.mut === 'ghost') {
+        var c = Math.cos(cur.phase);
+        cur.mesh.material.opacity = 0.16 + 0.84 * c * c;
+      }
+    }
+
+    var topY = (stack.length - 1) * H;
+    var target = state === 'over' ? Math.max(0, topY / 2) - 2.5 : Math.max(0, topY) - 2.2;
+    camY += (target - camY) * Math.min(1, dt * 4);
+    camZoom += (zoomTarget - camZoom) * Math.min(1, dt * 2.5);
+    if (Math.abs(camera.zoom - camZoom) > 0.0005) { camera.zoom = camZoom; camera.updateProjectionMatrix(); }
+    shake *= Math.exp(-dt * 6);
+    var sx = shake > 0.005 ? (Math.random() - 0.5) * shake : 0, sy = shake > 0.005 ? (Math.random() - 0.5) * shake : 0;
+    camera.position.set(12 + sx, camY + 12 + sy, 12);
+    camera.lookAt(0, camY, 0);
+    camera.updateMatrixWorld();
+    sun.position.set(7, camY + 16, 9);
+    sun.target.position.set(0, camY, 0);
+    starGroup.position.y = camY * 0.85;
+    starMat.opacity = Math.max(0, Math.min(0.9, (stack.length - 12) / 40));
+
+    var tTarget = Math.min(1, (stack.length - 1) / 55);
+    skyT += (tTarget - skyT) * Math.min(1, dt * 1.2);
+    paintSky();
+
+    if (marker) {
+      marker.material.opacity = 0.5 + 0.25 * Math.sin(clock * 3);
+      tagV.set(2.9, marker.position.y, 2.9).project(camera);
+      var px = (tagV.x * 0.5 + 0.5) * window.innerWidth, py = (-tagV.y * 0.5 + 0.5) * window.innerHeight;
+      if (py > -20 && py < window.innerHeight + 20 && px < window.innerWidth - 50) {
+        tagEl.style.display = 'block';
+        tagEl.style.transform = 'translate(' + (px + 8) + 'px,' + (py - 10) + 'px)';
+      } else tagEl.style.display = 'none';
+    } else tagEl.style.display = 'none';
+
+    for (var i = Math.max(0, stack.length - 3); i < stack.length; i++) {
+      var e = stack[i];
+      if (e.flash > 0) { e.flash = Math.max(0, e.flash - dt * 2.6); e.mesh.material.emissiveIntensity = e.flash * 0.7; }
+    }
+
+    for (var j = debris.length - 1; j >= 0; j--) {
+      var d = debris[j];
+      d.vel.y -= GRAVITY * dt;
+      d.mesh.position.addScaledVector(d.vel, dt);
+      d.mesh.rotation.x += d.spin.x * dt; d.mesh.rotation.z += d.spin.z * dt;
+      if (d.mesh.position.y < camY - 40) { scene.remove(d.mesh); debris.splice(j, 1); }
+    }
+
+    for (var k = rings.length - 1; k >= 0; k--) {
+      var r = rings[k];
+      r.t += dt;
+      var q = r.t / 0.7;
+      if (q >= 1) { scene.remove(r.mesh); rings.splice(k, 1); continue; }
+      var s = 1 + q * 0.65;
+      r.mesh.scale.set(r.sx * s, 1, r.sz * s);
+      r.mesh.material.opacity = 0.95 * (1 - q);
+    }
+  }
+
+  var last = performance.now();
+  function frame(now) {
+    var dt = Math.min(0.05, (now - last) / 1000);
+    last = now;
+    update(dt);
+    renderer.render(scene, camera);
+    requestAnimationFrame(frame);
+  }
+
+  /* ---------- CrazyGames SDK glue ---------- */
+  if (CG && CG.game) {
+    try {
+      sdkMuted = !!(CG.game.settings && CG.game.settings.muteAudio);
+      paintMute();
+      CG.game.addSettingsChangeListener(function (st) {
+        sdkMuted = !!(st && st.muteAudio);
+        paintMute();
+        if (actx) { try { if (sdkMuted) actx.suspend(); else actx.resume(); } catch (e) {} }
+      });
+    } catch (e) {}
+  }
+  // pause the SDK's gameplay clock while the tab is hidden
+  document.addEventListener('visibilitychange', function () {
+    if (state !== 'play') return;
+    gp(document.hidden ? 'gameplayStop' : 'gameplayStart');
+  });
+  // iOS only unlocks audio on touchend/click, so try again on every release
+  ['pointerup', 'touchend', 'keydown'].forEach(function (ev) { window.addEventListener(ev, function () { ac(); }, { passive: true }); });
+  // no long-press menu over the game
+  window.addEventListener('contextmenu', function (e) { e.preventDefault(); });
+  // ready: enable the Start button, let the loader hand over an early tap, and take keyboard focus
+  var playBtn = $('#play');
+  playBtn.disabled = false; playBtn.textContent = 'Start stacking';
+  window.PLINTH_START = function () { if (state === 'menu') start(); };
+  try { window.focus(); document.body.tabIndex = -1; } catch (e) {}
+  window.addEventListener('pointerdown', function () { try { window.focus(); } catch (e) {} });
+
+  renderMenus();
+  reset();
+  camY = -2.2;
+  requestAnimationFrame(frame);
+};
+</script>
+<script>
+(function () {
+  var CG = null, pending = false, sdkDone = false, threeDone = false, booted = false;
+  var CDN = 'https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js';
+
+  // Remember a tap or Space/Enter that arrives while the game is still loading,
+  // and start the game with it as soon as loading finishes.
+  function early(e) {
+    if (e.type === 'keydown' && e.code !== 'Space' && e.code !== 'Enter') return;
+    pending = true;
+  }
+  window.addEventListener('pointerdown', early);
+  window.addEventListener('keydown', early);
+
+  function maybeBoot() {
+    if (booted || !sdkDone || !threeDone) return;
+    booted = true;
+    window.removeEventListener('pointerdown', early);
+    window.removeEventListener('keydown', early);
+    window.PLINTH_SDK = CG;
+    try { window.PLINTH_BOOT(); } catch (e) { if (window.console) console.error(e); }
+    try { if (CG && CG.game) CG.game.loadingStop(); } catch (e) {}
+    if (pending && window.PLINTH_START) { try { window.PLINTH_START(); } catch (e) {} }
+  }
+
+  function loadScript(src, ok, fail) {
+    var s = document.createElement('script');
+    s.src = src; s.onload = ok; s.onerror = fail;
+    document.head.appendChild(s);
+  }
+
+  // 1) CrazyGames SDK. Only wait for it on CrazyGames (or its local QA mode);
+  //    anywhere else it is switched off, so skip it and save to the browser.
+  var sdk = null;
+  try { sdk = window.CrazyGames && window.CrazyGames.SDK; } catch (e) { sdk = null; }
+  if (sdk && sdk.environment !== 'disabled') {
+    var go = function (ok) {
+      if (sdkDone) return;
+      sdkDone = true;
+      if (ok) { CG = sdk; try { CG.game.loadingStart(); } catch (e) {} }
+      maybeBoot();
+    };
+    var timer = setTimeout(function () { go(false); }, 4000);
+    try {
+      sdk.init().then(function () { clearTimeout(timer); go(true); }, function () { clearTimeout(timer); go(false); });
+    } catch (e) { clearTimeout(timer); go(false); }
+  } else {
+    sdkDone = true;
+  }
+
+  // 2) three.js, in parallel with the SDK: a local copy first, then the CDN.
+  function threeReady() { threeDone = true; maybeBoot(); }
+  if (window.THREE) threeReady();
+  else loadScript('three.min.js', threeReady, function () { loadScript(CDN, threeReady, threeReady); });
+})();
+</script>
 </body>
 </html>
